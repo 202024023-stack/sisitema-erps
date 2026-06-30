@@ -1,0 +1,88 @@
+-- 1. TABLA: empresas
+CREATE TABLE empresas (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ruc VARCHAR(11) UNIQUE NOT NULL,
+    razon_social VARCHAR(255) NOT NULL,
+    nombre_comercial VARCHAR(255),
+    direccion TEXT NOT NULL,
+    ubigeo VARCHAR(6) NOT NULL,
+    departamento VARCHAR(50) NOT NULL,
+    provincia VARCHAR(50) NOT NULL,
+    distrito VARCHAR(50) NOT NULL,
+    token_sunat_sol VARCHAR(100),
+    usuario_sunat_sol VARCHAR(50),
+    clave_sunat_sol VARCHAR(100),
+    certificado_digital_nom VARCHAR(100),
+    estado BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_empresas_ruc ON empresas(ruc);
+
+-- 2. TABLA: sucursales
+CREATE TABLE sucursales (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    empresa_id UUID NOT NULL REFERENCES empresas(id) ON DELETE RESTRICT,
+    codigo_sunat VARCHAR(4) NOT NULL, -- Ej: '0000' (Principal), '0001'
+    nombre VARCHAR(150) NOT NULL,
+    direccion TEXT NOT NULL,
+    telefono VARCHAR(20),
+    estado BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_empresa_sucursal UNIQUE(empresa_id, codigo_sunat)
+);
+
+-- 3. TABLA: plan_contable (PCGE)
+CREATE TABLE plan_contable (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    empresa_id UUID NOT NULL REFERENCES empresas(id) ON DELETE RESTRICT,
+    cuenta VARCHAR(10) NOT NULL, -- Ej: '10411'
+    descripcion VARCHAR(255) NOT NULL,
+    tipo_cuenta VARCHAR(20) NOT NULL, -- 'Activo', 'Pasivo', 'Patrimonio', 'Ingreso', 'Gasto'
+    nivel INT NOT NULL, -- 2, 3, 4, 5 dígitos
+    permite_asiento BOOLEAN DEFAULT FALSE, -- Solo último nivel registra
+    moneda VARCHAR(3) DEFAULT 'PEN',
+    estado BOOLEAN DEFAULT TRUE,
+    CONSTRAINT uq_empresa_cuenta UNIQUE(empresa_id, cuenta)
+);
+
+CREATE INDEX idx_plan_contable_busqueda ON plan_contable(empresa_id, cuenta);
+
+-- 4. TABLA: asiento_diario (Cabecera del Libro Diario)
+CREATE TABLE asientos_diario (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    empresa_id UUID NOT NULL REFERENCES empresas(id) ON DELETE RESTRICT,
+    sucursal_id UUID NOT NULL REFERENCES sucursales(id) ON DELETE RESTRICT,
+    periodo VARCHAR(6) NOT NULL, -- Formato: '202606' (AñoMes)
+    fecha_asiento DATE NOT NULL,
+    correlativo VARCHAR(20) NOT NULL, -- Código correlativo único por mes
+    glosa TEXT NOT NULL,
+    modulo_origen VARCHAR(50) NOT NULL, -- 'VENTAS', 'COMPRAS', 'CAJA', 'ACTIVOS'
+    documento_referencia_id UUID, -- Polimórfico o ID del documento de origen
+    usuario_id UUID NOT NULL, -- Auditoría de quién generó el proceso
+    estado VARCHAR(20) DEFAULT 'CUADRADO', -- 'CUADRADO', 'ANULADO'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_empresa_periodo_correlativo UNIQUE(empresa_id, periodo, correlativo)
+);
+
+CREATE INDEX idx_asientos_fecha ON asientos_diario(empresa_id, fecha_asiento);
+
+-- 5. TABLA: asiento_diario_detalles (Apuntes contables partidas)
+CREATE TABLE asiento_diario_detalles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    asiento_diario_id UUID NOT NULL REFERENCES asientos_diario(id) ON DELETE CASCADE,
+    cuenta_contable VARCHAR(10) NOT NULL,
+    centro_costo_id UUID, -- Opcional, para cuentas de la clase 6 y 9
+    debe NUMERIC(14,2) NOT NULL DEFAULT 0.00,
+    haber NUMERIC(14,2) NOT NULL DEFAULT 0.00,
+    moneda VARCHAR(3) DEFAULT 'PEN',
+    tipo_cambio NUMERIC(6,4) DEFAULT 1.0000,
+    debe_extranjero NUMERIC(14,2) DEFAULT 0.00,
+    haber_extranjero NUMERIC(14,2) DEFAULT 0.00,
+    documento_tipo VARCHAR(2), -- Tabla 10 SUNAT (Ej: '01' Factura, '03' Boleta)
+    documento_serie_numero VARCHAR(30), -- Ej: 'F001-00004521'
+    CONSTRAINT chk_partida_doble_valores CHECK (debe >= 0 AND haber >= 0)
+);
+
+CREATE INDEX idx_detalles_cuenta ON asiento_diario_detalles(cuenta_contable);
